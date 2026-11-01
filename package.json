@@ -1,0 +1,13 @@
+{
+  "name": "tetsao-party",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Tom's personal server portal visual prototype",
+  "scripts": {
+    "dev": "npx wrangler dev --port 8788",
+    "preview": "npx wrangler dev --port 8788",
+    "test": "node test/app.test.js",
+    "check": "node --check src/worker.js && node --check src/attempt-limiter.js && node --check src/question-bank.js && node --check src/services.js && node --check public/app.js && node --check test/app.test.js"
+  }
+}

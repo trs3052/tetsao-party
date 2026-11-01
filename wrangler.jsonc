@@ -1,0 +1,26 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "tetsao-party",
+  "compatibility_date": "2026-10-30",
+  "main": "./src/worker.js",
+  "upload_source_maps": false,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "ATTEMPT_LIMITER",
+        "class_name": "AttemptLimiter"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["AttemptLimiter"]
+    }
+  ],
+  "assets": {
+    "directory": "./public/",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  }
+}

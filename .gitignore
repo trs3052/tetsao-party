@@ -1,0 +1,31 @@
+# Local Cloudflare and environment secrets
+.dev.vars*
+!.dev.vars.example
+.env*
+.secrets/
+secrets/
+*.secret
+*.secrets
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Dependencies and generated build/test output
+node_modules/
+.wrangler/
+dist/
+build/
+out/
+coverage/
+.cache/
+.turbo/
+
+# Local operating-system and editor artifacts
+.DS_Store
+Thumbs.db
+*.log
+*.swp
+*.swo
+*.tsbuildinfo
+

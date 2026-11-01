@@ -1,0 +1,3 @@
+# Fictional local-only samples. Do not use these as real portal answers.
+SESSION_SECRET=sample-only-do-not-use
+QUESTION_ANSWERS=[["sample-family"],["sample-snack"],["sample-cut-a","sample-cut-b"],["sample-tone-a","sample-tone-b"],["sample-vehicle-a","sample-vehicle-b","sample-vehicle-c"],["sample-home"],["sample-city-a"],["sample-city-b"],["sample-color"],["sample-month"]]
