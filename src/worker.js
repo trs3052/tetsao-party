@@ -27,20 +27,41 @@ function unavailable() {
   return json({ error: "The portal gate is temporarily unavailable. Please try again shortly." }, 503);
 }
 
-function hasSecret(env) {
-  return typeof env.SESSION_SECRET === "string" && encoder.encode(env.SESSION_SECRET).byteLength >= 32;
+function logUnavailable(route, component) {
+  // Keep diagnostics to fixed labels only. Never log request data, secret values,
+  // answers, tokens, cookies, or exception messages.
+  console.warn(JSON.stringify({ event: "portal_gate_unavailable", route, component }));
+}
+
+function sessionSecretIssue(env) {
+  if (typeof env.SESSION_SECRET !== "string" || env.SESSION_SECRET.length === 0) return "session_secret_missing_or_not_string";
+  if (encoder.encode(env.SESSION_SECRET).byteLength < 32) return "session_secret_too_short";
+  return null;
 }
 
 function loadAnswerBank(env) {
-  if (typeof env.QUESTION_ANSWERS !== "string" || env.QUESTION_ANSWERS.length > 8192) return null;
+  if (typeof env.QUESTION_ANSWERS !== "string") return { bank: null, issue: "question_answers_missing_or_not_string" };
+  if (env.QUESTION_ANSWERS.length > 8192) return { bank: null, issue: "question_answers_too_large" };
+  let bank;
   try {
-    const bank = JSON.parse(env.QUESTION_ANSWERS);
-    if (!Array.isArray(bank) || bank.length !== QUESTIONS.length) return null;
-    if (!bank.every((answers) => Array.isArray(answers) && answers.length > 0 && answers.length <= 8 && answers.every((answer) => typeof answer === "string" && answer.trim().length > 0 && answer.length <= MAX_ANSWER_LENGTH))) return null;
-    return bank;
+    bank = JSON.parse(env.QUESTION_ANSWERS);
   } catch {
-    return null;
+    return { bank: null, issue: "question_answers_invalid_json" };
   }
+  if (!Array.isArray(bank) || bank.length !== QUESTIONS.length) return { bank: null, issue: "question_answers_invalid_question_count" };
+  if (!bank.every((answers) => Array.isArray(answers) && answers.length > 0 && answers.length <= 8 && answers.every((answer) => typeof answer === "string" && answer.trim().length > 0 && answer.length <= MAX_ANSWER_LENGTH))) {
+    return { bank: null, issue: "question_answers_invalid_shape" };
+  }
+  return { bank, issue: null };
+}
+
+function gatewayConfiguration(env) {
+  const secretIssue = sessionSecretIssue(env);
+  if (secretIssue) return { issue: secretIssue, answerBank: null };
+  const answerBank = loadAnswerBank(env);
+  if (answerBank.issue) return { issue: answerBank.issue, answerBank: null };
+  if (!env.ATTEMPT_LIMITER) return { issue: "attempt_limiter_binding_missing", answerBank: null };
+  return { issue: null, answerBank: answerBank.bank };
 }
 
 async function hmacKey(secret) {
@@ -92,7 +113,7 @@ function cookieValue(request) {
 }
 
 export async function verifySession(request, env, nowSeconds = Math.floor(Date.now() / 1000)) {
-  if (!hasSecret(env)) return null;
+  if (sessionSecretIssue(env)) return null;
   const payload = await verifyToken(cookieValue(request), env.SESSION_SECRET, nowSeconds);
   if (!payload || payload.typ !== "session") return null;
   if (payload.exp - payload.iat !== SESSION_TTL_SECONDS) return null;
@@ -117,12 +138,28 @@ function randomQuestionIndex() {
 
 async function handleChallenge(request, env) {
   if (request.method !== "GET") return json({ error: "Use GET to request a question." }, 405, { Allow: "GET" });
-  if (!hasSecret(env) || !loadAnswerBank(env) || !env.ATTEMPT_LIMITER) return unavailable();
+  const { issue } = gatewayConfiguration(env);
+  if (issue) {
+    logUnavailable("/api/challenge", issue);
+    return unavailable();
+  }
 
   if (await verifySession(request, env)) return json({ authenticated: true });
 
-  const qid = randomQuestionIndex();
-  const challenge = await issueChallenge(qid, env.SESSION_SECRET);
+  let qid;
+  try {
+    qid = randomQuestionIndex();
+  } catch {
+    logUnavailable("/api/challenge", "challenge_randomness_failed");
+    return unavailable();
+  }
+  let challenge;
+  try {
+    challenge = await issueChallenge(qid, env.SESSION_SECRET);
+  } catch {
+    logUnavailable("/api/challenge", "challenge_signing_failed");
+    return unavailable();
+  }
   return json({ authenticated: false, question: QUESTIONS[qid].prompt, challenge });
 }
 
@@ -134,20 +171,20 @@ async function hashedClientKey(request) {
 }
 
 async function consumeAttempt(request, env) {
-  if (!env.ATTEMPT_LIMITER) return { unavailable: true };
+  if (!env.ATTEMPT_LIMITER) return { unavailable: true, issue: "attempt_limiter_binding_missing" };
   const clientKey = await hashedClientKey(request);
-  if (!clientKey) return { unavailable: true };
+  if (!clientKey) return { unavailable: true, issue: "client_ip_missing" };
 
   try {
     const id = env.ATTEMPT_LIMITER.idFromName(clientKey);
     const stub = env.ATTEMPT_LIMITER.get(id);
     const response = await stub.fetch("https://attempt-limiter.internal/check", { method: "POST" });
-    if (!response.ok) return { unavailable: true };
+    if (!response.ok) return { unavailable: true, issue: "attempt_limiter_response_not_ok" };
     const result = await response.json();
-    if (typeof result.allowed !== "boolean") return { unavailable: true };
+    if (typeof result.allowed !== "boolean") return { unavailable: true, issue: "attempt_limiter_response_invalid" };
     return result;
   } catch {
-    return { unavailable: true };
+    return { unavailable: true, issue: "attempt_limiter_request_failed" };
   }
 }
 
@@ -191,15 +228,25 @@ function secureEnoughForCookie(url) {
 
 async function handleAnswer(request, env, url) {
   if (request.method !== "POST") return json({ error: "Use POST to submit an answer." }, 405, { Allow: "POST" });
-  const answerBank = loadAnswerBank(env);
-  if (!hasSecret(env) || !answerBank || !env.ATTEMPT_LIMITER || !secureEnoughForCookie(url)) return unavailable();
+  const { issue, answerBank } = gatewayConfiguration(env);
+  if (issue) {
+    logUnavailable("/api/answer", issue);
+    return unavailable();
+  }
+  if (!secureEnoughForCookie(url)) {
+    logUnavailable("/api/answer", "request_scheme_not_secure");
+    return unavailable();
+  }
   if (!originAllowed(request, url) || !request.headers.get("Origin")) return json({ error: "Please submit your answer from this portal page." }, 403);
   if (request.headers.get("Content-Type")?.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
     return json({ error: "That answer could not be read. Please try again." }, 415);
   }
 
   const attempt = await consumeAttempt(request, env);
-  if (attempt.unavailable) return unavailable();
+  if (attempt.unavailable) {
+    logUnavailable("/api/answer", attempt.issue);
+    return unavailable();
+  }
   if (!attempt.allowed) {
     const retryAfter = Math.max(1, Math.ceil((attempt.resetAt - Date.now()) / 1000));
     return json({ error: "That's a lot of guesses for now. Please take a break and try again later." }, 429, { "Retry-After": String(retryAfter) });
@@ -243,7 +290,11 @@ async function handleAnswer(request, env, url) {
 
 async function handleDashboard(request, env) {
   if (request.method !== "GET") return json({ error: "Not found." }, 404);
-  if (!hasSecret(env) || !loadAnswerBank(env) || !env.ATTEMPT_LIMITER) return unavailable();
+  const { issue } = gatewayConfiguration(env);
+  if (issue) {
+    logUnavailable("/api/dashboard", issue);
+    return unavailable();
+  }
   if (!(await verifySession(request, env))) return json({ error: "Please answer the portal question first." }, 401);
   return json({ services: SERVICES });
 }
@@ -266,10 +317,14 @@ export default {
       if (url.pathname === "/api/dashboard") return await handleDashboard(request, env);
       if (url.pathname.startsWith("/api/")) return json({ error: "Not found." }, 404);
 
-      if (!env.ASSETS) return unavailable();
+      if (!env.ASSETS) {
+        logUnavailable("/assets", "assets_binding_missing");
+        return unavailable();
+      }
       return withSecurityHeaders(await env.ASSETS.fetch(request));
     } catch {
-      // Intentionally do not log request bodies or private question data.
+      const route = ["/api/challenge", "/api/answer", "/api/dashboard"].includes(url.pathname) ? url.pathname : "/other";
+      logUnavailable(route, "unexpected_worker_error");
       return unavailable();
     }
   }

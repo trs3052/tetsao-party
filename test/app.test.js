@@ -100,6 +100,17 @@ async function answerRequest(env, challenge, answer, ip = "203.0.113.10") {
   }), env);
 }
 
+async function captureWarnings(callback) {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...values) => warnings.push(values.join(" "));
+  try {
+    return { result: await callback(), warnings };
+  } finally {
+    console.warn = originalWarn;
+  }
+}
+
 test("a correct secret-provided answer creates a signed 30-day session cookie", async () => {
   const env = createEnvironment();
   const challengeResponse = await worker.fetch(request("/api/challenge"), env);
@@ -221,6 +232,108 @@ test("gateway fails closed when either Wrangler secret is missing or malformed",
   }
   const malformed = createEnvironment({ questionAnswers: "not-json" });
   assert.equal((await worker.fetch(request("/api/challenge"), malformed)).status, 503);
+});
+
+test("challenge preflight logs a safe reason for every configuration failure", async () => {
+  const missingSecret = createEnvironment();
+  missingSecret.SESSION_SECRET = "";
+  const shortSecret = createEnvironment({ secret: "too-short" });
+  const missingAnswers = createEnvironment();
+  delete missingAnswers.QUESTION_ANSWERS;
+  const invalidJson = createEnvironment({ questionAnswers: "not-json" });
+  const wrongQuestionCount = createEnvironment({ questionAnswers: JSON.stringify(Array.from({ length: 9 }, () => ["sample"])) });
+  const invalidShape = createEnvironment({ questionAnswers: JSON.stringify(Array.from({ length: 10 }, (_, index) => index === 3 ? [""] : ["sample"])) });
+  const tooLarge = createEnvironment({ questionAnswers: " ".repeat(8193) });
+  const missingLimiter = createEnvironment({ limiter: false });
+  const scenarios = [
+    [missingSecret, "session_secret_missing_or_not_string"],
+    [shortSecret, "session_secret_too_short"],
+    [missingAnswers, "question_answers_missing_or_not_string"],
+    [invalidJson, "question_answers_invalid_json"],
+    [wrongQuestionCount, "question_answers_invalid_question_count"],
+    [invalidShape, "question_answers_invalid_shape"],
+    [tooLarge, "question_answers_too_large"],
+    [missingLimiter, "attempt_limiter_binding_missing"]
+  ];
+
+  for (const [env, component] of scenarios) {
+    const { result, warnings } = await captureWarnings(() => worker.fetch(request("/api/challenge"), env));
+    assert.equal(result.status, 503, component);
+    assert.equal(warnings.length, 1, component);
+    assert.deepEqual(JSON.parse(warnings[0]), {
+      event: "portal_gate_unavailable",
+      route: "/api/challenge",
+      component
+    });
+    assert.equal(warnings[0].includes(secret), false);
+    for (const answer of TEST_ANSWERS.flat()) assert.equal(warnings[0].includes(answer), false);
+  }
+});
+
+test("challenge preflight does not contact the Durable Object", async () => {
+  const env = createEnvironment();
+  let contacted = false;
+  env.ATTEMPT_LIMITER = {
+    idFromName() { contacted = true; throw new Error("must not be called for GET /api/challenge"); },
+    get() { contacted = true; throw new Error("must not be called for GET /api/challenge"); }
+  };
+  const response = await worker.fetch(request("/api/challenge"), env);
+  assert.equal(response.status, 200);
+  assert.equal(contacted, false);
+});
+
+test("unexpected challenge errors log only a fixed diagnostic label", async () => {
+  const env = createEnvironment();
+  Object.defineProperty(env, "ATTEMPT_LIMITER", {
+    get() { throw new Error("private runtime detail must not be logged"); }
+  });
+  const { result, warnings } = await captureWarnings(() => worker.fetch(request("/api/challenge"), env));
+  assert.equal(result.status, 503);
+  assert.deepEqual(warnings.map((line) => JSON.parse(line)), [{
+    event: "portal_gate_unavailable",
+    route: "/api/challenge",
+    component: "unexpected_worker_error"
+  }]);
+  assert.equal(warnings.join(" ").includes("private runtime detail"), false);
+});
+
+test("answer submission fails closed and diagnoses Durable Object failures safely", async () => {
+  const challenge = await challengeFor(0);
+  const scenarios = [
+    ["client_ip_missing", { ip: null }],
+    ["attempt_limiter_request_failed", { fetch: async () => { throw new Error("private DO detail"); } }],
+    ["attempt_limiter_response_not_ok", { fetch: async () => new Response("private DO detail", { status: 500 }) }],
+    ["attempt_limiter_response_invalid", { fetch: async () => new Response("{}") }]
+  ];
+
+  for (const [component, limiter] of scenarios) {
+    const env = createEnvironment();
+    if (component !== "client_ip_missing") {
+      env.ATTEMPT_LIMITER = {
+        idFromName: (key) => key,
+        get: () => ({ fetch: limiter.fetch })
+      };
+    }
+    const ip = limiter.ip === null ? null : "203.0.113.10";
+    const { result, warnings } = await captureWarnings(() => worker.fetch(request("/api/answer", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Origin: "https://portal.test",
+        ...(ip ? { "CF-Connecting-IP": ip } : {})
+      },
+      body: JSON.stringify({ challenge, answer: "sample-answer" })
+    }), env));
+    assert.equal(result.status, 503, component);
+    assert.deepEqual(warnings.map((line) => JSON.parse(line)), [{
+      event: "portal_gate_unavailable",
+      route: "/api/answer",
+      component
+    }]);
+    assert.equal(warnings.join(" ").includes("private DO detail"), false);
+    assert.equal(warnings.join(" ").includes("sample-answer"), false);
+    assert.equal(warnings.join(" ").includes(challenge), false);
+  }
 });
 
 test("theme selection, saved preferences, backgrounds, and six themes remain available", () => {
