@@ -1,6 +1,6 @@
 import { AttemptLimiter } from "./attempt-limiter.js";
 import { QUESTIONS } from "./question-bank.js";
-import { SERVICES } from "./services.js";
+import { SERVICES, YOUTUBE_CHANNELS } from "./services.js";
 
 export { AttemptLimiter };
 
@@ -296,7 +296,7 @@ async function handleDashboard(request, env) {
     return unavailable();
   }
   if (!(await verifySession(request, env))) return json({ error: "Please answer the portal question first." }, 401);
-  return json({ services: SERVICES });
+  return json({ services: SERVICES, youtubeChannels: YOUTUBE_CHANNELS });
 }
 
 function withSecurityHeaders(response) {

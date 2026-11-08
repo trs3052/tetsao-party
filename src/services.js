@@ -6,5 +6,17 @@ export const SERVICES = [
   { name: "Jellyfin", description: "Stream your media library", href: "" },
   { name: "Audiobookshelf", description: "Books, wherever you are", href: "" },
   { name: "Immich", description: "Photos & memories", href: "" },
-  { name: "Minecraft Java Edition", description: "Join the server", href: "", address: "chords-mann.tun.ply.gg" }
+  {
+    name: "Minecraft Java Edition",
+    description: "Join the server",
+    href: "",
+    address: "chords-mann.tun.ply.gg",
+    sectionTitle: "Join Our Minecraft Server",
+    subtitle: "Must share username with Tom for whitelisting."
+  }
+];
+
+export const YOUTUBE_CHANNELS = [
+  { name: "Sloth Slime ASMR", href: "https://www.youtube.com/@SlothSlimeASMR", description: "Slime videos and ASMR", icon: "slime" },
+  { name: "Scale Trail Adventures", href: "https://www.youtube.com/@scaletrailadventures", description: "RC crawlers and trail adventures", icon: "crawler" }
 ];

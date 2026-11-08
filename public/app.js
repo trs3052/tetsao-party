@@ -1,4 +1,4 @@
-import { renderServices } from "./service-cards.js";
+import { renderChannels, renderServer, renderServices } from "./service-cards.js";
 
 (() => {
   const themes = ["magic", "utah", "arcade", "trail"];
@@ -13,6 +13,8 @@ import { renderServices } from "./service-cards.js";
   const challengePanel = document.querySelector("#challenge-panel");
   const destinations = document.querySelector("#destinations");
   const serviceGrid = document.querySelector("#service-grid");
+  const serverSection = document.querySelector("#server-section");
+  const youtubeSection = document.querySelector("#youtube-section");
   const questionPrompt = document.querySelector("#question-prompt");
   const answerInput = document.querySelector("#answer-input");
   const answerForm = document.querySelector("#answer-form");
@@ -106,7 +108,12 @@ import { renderServices } from "./service-cards.js";
         return;
       }
       if (!response.ok) throw new Error(body.error || "The dashboard couldn't be loaded.");
-      renderServices(body.services, serviceGrid);
+      const server = body.services.find((service) => typeof service.address === "string" && service.address);
+      renderServices(body.services.filter((service) => !service.address), serviceGrid);
+      renderServer(server, serverSection);
+      renderChannels(body.youtubeChannels, youtubeSection);
+      serverSection.hidden = !server;
+      youtubeSection.hidden = !Array.isArray(body.youtubeChannels) || body.youtubeChannels.length === 0;
       challengePanel.hidden = true;
       destinations.hidden = false;
       destinations.focus?.();
