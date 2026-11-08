@@ -1,3 +1,5 @@
+import { renderServices } from "./service-cards.js";
+
 (() => {
   const themes = ["magic", "utah", "arcade", "trail"];
   const artwork = {
@@ -6,15 +8,6 @@
     arcade: "/artwork/retro-arcade.webp",
     trail: "/artwork/rc-trail.webp"
   };
-  const icons = [
-    '<svg viewBox="0 0 48 48"><rect x="7" y="8" width="34" height="12" rx="3"/><rect x="7" y="28" width="34" height="12" rx="3"/><path d="M14 14h.1M14 34h.1M23 14h14M23 34h14"/></svg>',
-    '<svg viewBox="0 0 48 48"><path d="m24 5 18 10-18 10L6 15 24 5Z"/><path d="m6 24 18 10 18-10M6 33l18 10 18-10"/></svg>',
-    '<svg viewBox="0 0 48 48"><path d="M9 6h30v36H9zM15 6l5 8M27 6l5 8"/><path d="m20 20 12 7-12 7V20Z"/></svg>',
-    '<svg viewBox="0 0 48 48"><rect x="5" y="7" width="38" height="28" rx="3"/><path d="m20 14 13 7-13 7V14ZM15 42h18M24 35v7"/></svg>',
-    '<svg viewBox="0 0 48 48"><path d="M24 12c-6-5-12-5-18-3v29c6-2 12-2 18 3 6-5 12-5 18-3V9c-6-2-12-2-18 3Z"/><path d="M24 12v29"/></svg>',
-    '<svg viewBox="0 0 48 48"><rect x="5" y="7" width="38" height="34" rx="4"/><circle cx="17" cy="18" r="3"/><path d="m8 36 11-11 7 7 6-6 8 10"/></svg>'
-  ];
-  const cardKinds = ["admin", "vm", "requests", "jellyfin", "books", "photos"];
   const themeSelect = document.querySelector("#theme-select");
   const sceneArt = document.querySelector("#scene-art");
   const challengePanel = document.querySelector("#challenge-panel");
@@ -101,42 +94,6 @@
     }
   }
 
-  function renderServices(services) {
-    serviceGrid.replaceChildren();
-    services.forEach((service, index) => {
-      const card = document.createElement("article");
-      card.className = `service-card service-card--${cardKinds[index] || "admin"}`;
-
-      const icon = document.createElement("span");
-      icon.className = "service-card__icon";
-      icon.setAttribute("aria-hidden", "true");
-      icon.innerHTML = icons[index] || icons[0];
-
-      const copy = document.createElement("span");
-      copy.className = "service-card__copy";
-      const name = document.createElement("strong");
-      name.textContent = service.name;
-      const description = document.createElement("small");
-      description.textContent = service.description;
-      copy.append(name, description);
-
-      const status = document.createElement("span");
-      status.className = "service-card__status";
-      status.textContent = service.href ? "Configured" : "Not configured";
-      card.append(icon, copy, status);
-
-      if (typeof service.href === "string" && service.href) {
-        const link = document.createElement("a");
-        link.className = "service-card__link";
-        link.href = service.href;
-        link.setAttribute("aria-label", `Open ${service.name}`);
-        card.append(link);
-        card.classList.add("service-card--configured");
-      }
-      serviceGrid.append(card);
-    });
-  }
-
   async function loadDashboard() {
     setBusy(true);
     setMessage("");
@@ -149,7 +106,7 @@
         return;
       }
       if (!response.ok) throw new Error(body.error || "The dashboard couldn't be loaded.");
-      renderServices(body.services);
+      renderServices(body.services, serviceGrid);
       challengePanel.hidden = true;
       destinations.hidden = false;
       destinations.focus?.();

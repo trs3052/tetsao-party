@@ -91,6 +91,22 @@ button, select { color: inherit; }
 .service-card__link { position: absolute; inset: 0; border-radius: inherit; z-index: 1; }
 .service-card--configured .service-card__status { color: #9de5a0; }
 .service-card--admin { --card-accent: #d8b45e; }.service-card--vm { --card-accent: #a782e3; }.service-card--requests { --card-accent: #e575bb; }.service-card--jellyfin { --card-accent: #63bfea; }.service-card--books { --card-accent: #efae4c; }.service-card--photos { --card-accent: #8bc980; }
+.service-card--minecraft { --card-accent: #78ad58; grid-template-columns: 48px minmax(0, 1fr) auto; grid-template-rows: auto auto; }
+.service-card--minecraft .service-card__icon { grid-row: 1 / 3; }
+.service-card--minecraft .service-card__copy { grid-column: 2; grid-row: 1; }
+.service-card__address { color: var(--ink); font: 600 .78rem/1.35 ui-monospace, 'SFMono-Regular', Consolas, monospace; overflow-wrap: anywhere; }
+.service-card__action { grid-column: 3; grid-row: 1 / 3; z-index: 2; display: grid; justify-items: center; gap: 4px; }
+.service-card__copy-button { min-width: 106px; min-height: 44px; padding: 9px 10px; border: 1px solid var(--card-accent); border-radius: var(--radius); color: var(--ink); background: var(--surface-2); font: 700 .7rem/1.2 var(--body); cursor: pointer; }
+.service-card__copy-button:hover { filter: brightness(1.18); }
+.service-card__copy-feedback { min-height: 1em; color: var(--muted); font: 500 .57rem/1.2 system-ui, sans-serif; text-align: center; }
+[data-theme="magic"] .service-card--minecraft { --card-accent: #94b36b; }
+[data-theme="magic"] .service-card--minecraft .service-card__copy-button { color: #f3e6c6; background: linear-gradient(#304b32,#1b3024); }
+[data-theme="utah"] .service-card--minecraft { --card-accent: #87bd61; }
+[data-theme="utah"] .service-card--minecraft .service-card__copy-button { color: #fff; border-color: #f0f0f0; background: linear-gradient(#bd1934,#850e24); text-transform: uppercase; }
+[data-theme="arcade"] .service-card--minecraft { --card-accent: #aaff29; }
+[data-theme="arcade"] .service-card--minecraft .service-card__copy-button { color: #10120b; border-color: #d4ff47; border-radius: 0; background: #aaff29; box-shadow: 0 0 12px #aaff29; text-transform: uppercase; }
+[data-theme="trail"] .service-card--minecraft { --card-accent: #91ad68; }
+[data-theme="trail"] .service-card--minecraft .service-card__copy-button { color: #fff; border-color: #603011; background: linear-gradient(#bd7135,#813f19); font-style: italic; }
 .site-footer { display: flex; justify-content: center; align-items: center; gap: 12px; margin-top: 25px; color: var(--muted); font-size: .73rem; }
 .footer__star { color: var(--accent); }
 .skip-link, .visually-hidden { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
@@ -137,6 +153,7 @@ button, select { color: inherit; }
 [data-theme="utah"] .challenge h2, [data-theme="utah"] .section-heading h2 { text-transform: uppercase; letter-spacing: .055em; }
 [data-theme="utah"] .challenge__form button { border-color: #ff7884; background: linear-gradient(#d01b34,#780e20); text-transform: uppercase; }
 [data-theme="utah"] .service-card { grid-template-columns: 65px 1fr; border: 3px solid #c7c8ce; border-radius: 7px; box-shadow: inset 0 0 0 3px #35353c,0 8px 18px rgba(0,0,0,.36); background: linear-gradient(105deg,#a40f2b 0 28%,#17181c 28% 100%); }
+[data-theme="utah"] .service-card--minecraft { grid-template-columns: 48px minmax(0, 1fr) auto; }
 [data-theme="utah"] .service-card::before { width: 100%; inset: auto 0 0; height: 3px; background: linear-gradient(90deg,#f4f4f5,var(--accent),#f4f4f5); opacity: .95; }
 [data-theme="utah"] .service-card__copy strong { text-transform: uppercase; font-family: Impact, 'Arial Narrow', sans-serif; letter-spacing: .045em; }
 [data-theme="utah"] .service-card__icon { color: #f6f6f7; }
@@ -208,6 +225,12 @@ button, select { color: inherit; }
   .challenge__feedback .challenge__note { align-items: flex-start; }
   .service-grid { grid-template-columns: 1fr; gap: 9px; }
   .service-card { min-height: 78px; grid-template-columns: 46px 1fr; }
+  .service-card--minecraft { grid-template-columns: 46px minmax(0, 1fr); grid-template-rows: auto auto auto; }
+  .service-card--minecraft .service-card__icon { grid-row: 1 / 3; }
+  .service-card--minecraft .service-card__action { grid-column: 2; grid-row: 3; justify-self: start; display: flex; align-items: center; gap: 8px; }
+  .service-card--minecraft .service-card__copy-button { min-width: 112px; }
+  .service-card__copy-feedback { text-align: left; }
+  [data-theme] .service-card--minecraft { grid-template-columns: 46px minmax(0, 1fr); grid-template-rows: auto auto auto; }
   .site-footer { font-size: .64rem; }
 }
 @media (prefers-reduced-motion: reduce) {

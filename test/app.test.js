@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import worker, { signToken, verifySession, verifyToken } from "../src/worker.js";
 import { AttemptLimiter } from "../src/attempt-limiter.js";
 import { QUESTIONS } from "../src/question-bank.js";
+import { SERVICES } from "../src/services.js";
+import { renderServices } from "../public/service-cards.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const secret = "test-only-secret-key-with-more-than-32-bytes";
@@ -22,6 +24,39 @@ const TEST_ANSWERS = [
   ["sample-month"]
 ];
 const nowSeconds = () => Math.floor(Date.now() / 1000);
+
+class FakeElement {
+  constructor(tagName) {
+    this.tagName = tagName;
+    this.children = [];
+    this.attributes = {};
+    this.listeners = new Map();
+    this.className = "";
+    this.classList = { add: (...names) => { this.className = [...new Set(`${this.className} ${names.join(" ")}`.trim().split(/\s+/u))].join(" "); } };
+    this.style = {};
+    this.textContent = "";
+  }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
+  setAttribute(name, value) { this.attributes[name] = value; }
+  addEventListener(name, handler) { this.listeners.set(name, handler); }
+  async click() { return this.listeners.get("click")?.({ currentTarget: this }); }
+  remove() {}
+  select() {}
+}
+
+function findElement(rootElement, className) {
+  if (rootElement.className.split(/\s+/u).includes(className)) return rootElement;
+  for (const child of rootElement.children) {
+    const found = findElement(child, className);
+    if (found) return found;
+  }
+  return null;
+}
+
+function allText(rootElement) {
+  return [rootElement.textContent, ...rootElement.children.map(allText)].join(" ");
+}
 
 function makeStorageState() {
   const values = new Map();
@@ -177,14 +212,21 @@ test("unauthorized dashboard requests and static page source reveal no service c
   const dashboard = await worker.fetch(request("/api/dashboard"), env);
   assert.equal(dashboard.status, 401);
   const body = await dashboard.text();
-  for (const name of ["Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich"]) assert.equal(body.includes(name), false);
+  const names = ["Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich", "Minecraft Java Edition"];
+  for (const name of names) assert.equal(body.includes(name), false);
+  assert.equal(body.includes("chords-mann.tun.ply.gg"), false);
 
   const html = await (await worker.fetch(request("/"), env)).text();
   const client = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
-  for (const name of ["Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich"]) {
+  const cardsModule = fs.readFileSync(path.join(root, "public/service-cards.js"), "utf8");
+  for (const name of names) {
     assert.equal(html.includes(name), false, `${name} must not be in initial HTML`);
     assert.equal(client.includes(name), false, `${name} must not be in public JavaScript`);
+    assert.equal(cardsModule.includes(name), false, `${name} must not be hardcoded in the public card renderer`);
   }
+  assert.equal(client.includes("chords-mann.tun.ply.gg"), false);
+  assert.equal(cardsModule.includes("chords-mann.tun.ply.gg"), false);
+  assert.equal((client + cardsModule).includes("Crafty"), false);
   assert.equal(fs.existsSync(path.join(root, "public/config.js")), false);
   assert.equal((await worker.fetch(request("/src/question-bank.js"), env)).status, 404);
   assert.equal((await worker.fetch(request("/config.js"), env)).status, 404);
@@ -192,9 +234,41 @@ test("unauthorized dashboard requests and static page source reveal no service c
   const authorized = await worker.fetch(request("/api/dashboard", { headers: { Cookie: await sessionCookie() } }), env);
   assert.equal(authorized.status, 200);
   const servicePayload = await authorized.json();
-  assert.deepEqual(servicePayload.services.map((service) => service.name), ["Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich"]);
+  assert.deepEqual(servicePayload.services.map((service) => service.name), names);
   assert.ok(servicePayload.services.every((service) => service.href === ""));
+  assert.deepEqual(servicePayload.services[6], {
+    name: "Minecraft Java Edition",
+    description: "Join the server",
+    href: "",
+    address: "chords-mann.tun.ply.gg"
+  });
+  assert.equal(JSON.stringify(servicePayload).includes("Crafty"), false);
   assert.ok(authorized.headers.get("Cache-Control").includes("no-store"));
+});
+
+test("Minecraft card shows its public endpoint and copies it from the authenticated dashboard", async () => {
+  const grid = new FakeElement("div");
+  const documentRef = { createElement: (tagName) => new FakeElement(tagName), body: new FakeElement("body") };
+  const copied = [];
+  const navigatorRef = { clipboard: { writeText: async (value) => copied.push(value) } };
+
+  renderServices(SERVICES, grid, documentRef, navigatorRef);
+
+  assert.equal(grid.children.length, 7);
+  const card = grid.children[6];
+  assert.ok(card.className.includes("service-card--minecraft"));
+  assert.match(allText(card), /Minecraft Java Edition/u);
+  assert.match(allText(card), /chords-mann\.tun\.ply\.gg/u);
+  assert.equal(findElement(card, "service-card__icon").attributes["aria-hidden"], "true");
+  assert.ok(findElement(card, "service-card__icon").innerHTML.includes("<svg"));
+
+  const button = findElement(card, "service-card__copy-button");
+  assert.equal(button.type, "button");
+  assert.equal(button.attributes["aria-label"], "Copy Minecraft Java Edition server address");
+  await button.click();
+  assert.deepEqual(copied, ["chords-mann.tun.ply.gg"]);
+  assert.equal(button.textContent, "Copied!");
+  assert.equal(findElement(card, "service-card__copy-feedback").textContent, "Address copied to clipboard.");
 });
 
 test("attempt limits are enforced in the shared Durable Object counter", async () => {
@@ -336,7 +410,7 @@ test("answer submission fails closed and diagnoses Durable Object failures safel
   }
 });
 
-test("theme selection, saved preferences, backgrounds, and six themes remain available", () => {
+test("theme selection, saved preferences, backgrounds, and Minecraft styling remain available", () => {
   const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
   const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
   const client = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
@@ -353,6 +427,10 @@ test("theme selection, saved preferences, backgrounds, and six themes remain ava
   assert.match(client, /localStorage\.getItem\("tetsao-theme"\)/u);
   assert.match(client, /localStorage\.setItem\("tetsao-theme"/u);
   assert.match(client, /localStorage\.removeItem\("tetsao-theme"\)/u);
+  assert.match(css, /\.service-card--minecraft/u);
+  for (const theme of ["magic", "utah", "arcade", "trail"]) {
+    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.service-card--minecraft`));
+  }
 });
 
 test("ignore rules cover local secrets, dependencies, and generated outputs", () => {
