@@ -6,8 +6,8 @@ import { fileURLToPath } from "node:url";
 import worker, { signToken, verifySession, verifyToken } from "../src/worker.js";
 import { AttemptLimiter } from "../src/attempt-limiter.js";
 import { QUESTIONS } from "../src/question-bank.js";
-import { SERVICES } from "../src/services.js";
-import { renderServices } from "../public/service-cards.js";
+import { SERVICES, YOUTUBE_CHANNELS } from "../src/services.js";
+import { renderChannels, renderServer, renderServices } from "../public/service-cards.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const secret = "test-only-secret-key-with-more-than-32-bytes";
@@ -212,20 +212,22 @@ test("unauthorized dashboard requests and static page source reveal no service c
   const dashboard = await worker.fetch(request("/api/dashboard"), env);
   assert.equal(dashboard.status, 401);
   const body = await dashboard.text();
-  const names = ["Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich", "Minecraft Java Edition"];
-  for (const name of names) assert.equal(body.includes(name), false);
-  assert.equal(body.includes("chords-mann.tun.ply.gg"), false);
+  const privateDashboardText = [
+    "Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich", "Minecraft Java Edition",
+    "Join Our Minecraft Server", "Must share username with Tom for whitelisting.", "chords-mann.tun.ply.gg",
+    "Sloth Slime ASMR", "Scale Trail Adventures", "https://www.youtube.com/@SlothSlimeASMR",
+    "https://www.youtube.com/@scaletrailadventures"
+  ];
+  for (const text of privateDashboardText) assert.equal(body.includes(text), false);
 
   const html = await (await worker.fetch(request("/"), env)).text();
   const client = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
   const cardsModule = fs.readFileSync(path.join(root, "public/service-cards.js"), "utf8");
-  for (const name of names) {
-    assert.equal(html.includes(name), false, `${name} must not be in initial HTML`);
-    assert.equal(client.includes(name), false, `${name} must not be in public JavaScript`);
-    assert.equal(cardsModule.includes(name), false, `${name} must not be hardcoded in the public card renderer`);
+  for (const text of privateDashboardText) {
+    assert.equal(html.includes(text), false, `${text} must not be in initial HTML`);
+    assert.equal(client.includes(text), false, `${text} must not be in public JavaScript`);
+    assert.equal(cardsModule.includes(text), false, `${text} must not be hardcoded in the public card renderer`);
   }
-  assert.equal(client.includes("chords-mann.tun.ply.gg"), false);
-  assert.equal(cardsModule.includes("chords-mann.tun.ply.gg"), false);
   assert.equal((client + cardsModule).includes("Crafty"), false);
   assert.equal(fs.existsSync(path.join(root, "public/config.js")), false);
   assert.equal((await worker.fetch(request("/src/question-bank.js"), env)).status, 404);
@@ -234,41 +236,99 @@ test("unauthorized dashboard requests and static page source reveal no service c
   const authorized = await worker.fetch(request("/api/dashboard", { headers: { Cookie: await sessionCookie() } }), env);
   assert.equal(authorized.status, 200);
   const servicePayload = await authorized.json();
-  assert.deepEqual(servicePayload.services.map((service) => service.name), names);
+  assert.deepEqual(servicePayload.services.map((service) => service.name), ["Zima Admin", "Zima VM", "Jellyseerr", "Jellyfin", "Audiobookshelf", "Immich", "Minecraft Java Edition"]);
   assert.ok(servicePayload.services.every((service) => service.href === ""));
   assert.deepEqual(servicePayload.services[6], {
     name: "Minecraft Java Edition",
     description: "Join the server",
     href: "",
-    address: "chords-mann.tun.ply.gg"
+    address: "chords-mann.tun.ply.gg",
+    sectionTitle: "Join Our Minecraft Server",
+    subtitle: "Must share username with Tom for whitelisting."
   });
+  assert.deepEqual(servicePayload.youtubeChannels, YOUTUBE_CHANNELS);
   assert.equal(JSON.stringify(servicePayload).includes("Crafty"), false);
   assert.ok(authorized.headers.get("Cache-Control").includes("no-store"));
 });
 
-test("Minecraft card shows its public endpoint and copies it from the authenticated dashboard", async () => {
+test("dashboard sections appear in application, server, and channel order", () => {
+  const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
+  const applications = html.indexOf('id="service-grid"');
+  const server = html.indexOf('id="server-section"');
+  const channels = html.indexOf('id="youtube-section"');
+  assert.ok(applications >= 0 && applications < server && server < channels);
+  assert.match(html, /id="server-section"[^>]*hidden/u);
+  assert.match(html, /id="youtube-section"[^>]*hidden/u);
+
+  const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
+  assert.match(css, /\.server-showcase__address\s*\{[^}]*white-space:\s*nowrap/u);
+  assert.match(css, /@media\s*\(max-width:\s*760px\)[\s\S]*?\.server-showcase\s*\{\s*grid-template-columns:\s*minmax\(0,\s*1fr\)/u);
+  assert.match(css, /@media\s*\(max-width:\s*520px\)[\s\S]*?\.channel-grid\s*\{\s*grid-template-columns:\s*1fr/u);
+});
+
+test("server showcase displays its address and copies it from the authenticated dashboard", async () => {
   const grid = new FakeElement("div");
+  const section = new FakeElement("section");
   const documentRef = { createElement: (tagName) => new FakeElement(tagName), body: new FakeElement("body") };
   const copied = [];
   const navigatorRef = { clipboard: { writeText: async (value) => copied.push(value) } };
 
-  renderServices(SERVICES, grid, documentRef, navigatorRef);
+  renderServices(SERVICES.filter((service) => !service.address), grid, documentRef);
+  renderServer(SERVICES[6], section, documentRef, navigatorRef);
 
-  assert.equal(grid.children.length, 7);
-  const card = grid.children[6];
-  assert.ok(card.className.includes("service-card--minecraft"));
-  assert.match(allText(card), /Minecraft Java Edition/u);
-  assert.match(allText(card), /chords-mann\.tun\.ply\.gg/u);
-  assert.equal(findElement(card, "service-card__icon").attributes["aria-hidden"], "true");
-  assert.ok(findElement(card, "service-card__icon").innerHTML.includes("<svg"));
+  assert.equal(grid.children.length, 6);
+  assert.match(allText(section), /Join Our Minecraft Server/u);
+  assert.match(allText(section), /Must share username with Tom for whitelisting\./u);
+  assert.match(allText(section), /chords-mann\.tun\.ply\.gg/u);
+  const cubeIcon = findElement(section, "server-showcase__icon");
+  assert.equal(cubeIcon.attributes["aria-hidden"], "true");
+  assert.match(cubeIcon.innerHTML, /<svg viewBox="0 0 64 64"/u);
+  for (const facet of ["grass-cube__left", "grass-cube__right", "grass-cube__top", "grass-cube__top-pixel", "grass-cube__edge"]) {
+    assert.ok(cubeIcon.innerHTML.includes(facet), `cube SVG includes ${facet}`);
+  }
 
-  const button = findElement(card, "service-card__copy-button");
+  const button = findElement(section, "server-showcase__copy-button");
   assert.equal(button.type, "button");
-  assert.equal(button.attributes["aria-label"], "Copy Minecraft Java Edition server address");
+  assert.equal(button.attributes["aria-label"], "Copy Server Address");
   await button.click();
   assert.deepEqual(copied, ["chords-mann.tun.ply.gg"]);
   assert.equal(button.textContent, "Copied!");
-  assert.equal(findElement(card, "service-card__copy-feedback").textContent, "Address copied to clipboard.");
+  assert.equal(findElement(section, "server-showcase__feedback").textContent, "Server address copied to clipboard.");
+});
+
+test("YouTube cards use the configured destinations with safe new-tab links", () => {
+  const section = new FakeElement("section");
+  const documentRef = { createElement: (tagName) => new FakeElement(tagName) };
+  renderChannels(YOUTUBE_CHANNELS, section, documentRef);
+
+  assert.match(allText(section), /Our YouTube Channels/u);
+  assert.equal(findElement(section, "channel-grid").children.length, 2);
+  const expected = [
+    ["Sloth Slime ASMR", "Slime videos and ASMR", "https://www.youtube.com/@SlothSlimeASMR"],
+    ["Scale Trail Adventures", "RC crawlers and trail adventures", "https://www.youtube.com/@scaletrailadventures"]
+  ];
+  for (const [index, [name, description, href]] of expected.entries()) {
+    const card = findElement(section, `channel-card--${YOUTUBE_CHANNELS[index].icon}`);
+    assert.ok(card);
+    assert.match(allText(card), new RegExp(name));
+    assert.match(allText(card), new RegExp(description));
+    const link = findElement(card, "channel-card__link");
+    assert.equal(link.href, href);
+    assert.equal(link.target, "_blank");
+    assert.equal(link.rel, "noopener noreferrer");
+    assert.equal(link.textContent, "Open Channel");
+    const icon = findElement(card, "channel-card__icon");
+    assert.equal(icon.attributes["aria-hidden"], "true");
+    assert.match(icon.innerHTML, /<svg viewBox="0 0 64 64"/u);
+    if (index === 0) {
+      assert.ok(icon.innerHTML.includes("sloth-slime__mask"));
+    } else {
+      for (const detail of ["crawler__body", "crawler__tire", "crawler__camera", "crawler__lens"]) {
+        assert.ok(icon.innerHTML.includes(detail), `crawler SVG includes ${detail}`);
+      }
+      assert.equal(icon.innerHTML.includes("crawler__rock"), false);
+    }
+  }
 });
 
 test("attempt limits are enforced in the shared Durable Object counter", async () => {
@@ -410,7 +470,7 @@ test("answer submission fails closed and diagnoses Durable Object failures safel
   }
 });
 
-test("theme selection, saved preferences, backgrounds, and Minecraft styling remain available", () => {
+test("theme selection, saved preferences, backgrounds, and dashboard section styling remain available", () => {
   const html = fs.readFileSync(path.join(root, "public/index.html"), "utf8");
   const css = fs.readFileSync(path.join(root, "public/styles.css"), "utf8");
   const client = fs.readFileSync(path.join(root, "public/app.js"), "utf8");
@@ -427,9 +487,17 @@ test("theme selection, saved preferences, backgrounds, and Minecraft styling rem
   assert.match(client, /localStorage\.getItem\("tetsao-theme"\)/u);
   assert.match(client, /localStorage\.setItem\("tetsao-theme"/u);
   assert.match(client, /localStorage\.removeItem\("tetsao-theme"\)/u);
-  assert.match(css, /\.service-card--minecraft/u);
+  assert.match(css, /\.server-showcase/u);
+  assert.match(css, /\.channel-card/u);
+  assert.match(css, /\.server-showcase__icon\s*\{[^}]*width:\s*clamp\(58px,\s*6vw,\s*70px\)/u);
+  assert.match(css, /\.channel-card__icon\s*\{[^}]*width:\s*62px/u);
+  assert.match(css, /\.channel-card__icon\s*\{\s*width:\s*50px/u);
   for (const theme of ["magic", "utah", "arcade", "trail"]) {
-    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.service-card--minecraft`));
+    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.server-showcase`));
+    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.channel-card`));
+    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.server-showcase__icon`));
+    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.channel-card--slime`));
+    assert.match(css, new RegExp(`\\[data-theme="${theme}"\\] \\.channel-card--crawler`));
   }
 });
 
